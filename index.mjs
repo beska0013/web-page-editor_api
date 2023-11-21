@@ -1,12 +1,17 @@
 import puppeteer from "puppeteer";
+import chromium from "@sparticuz/chromium";
 
-
-exports.handler = async (event, context) => {
+export const handler = async (event, context) => {
     let browser = null;
     let url = event.url;
     console.log(event.url);
     try {
-        browser = await puppeteer.launch();
+        browser = await puppeteer.launch({
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath(),
+            headless: chromium.headless,
+        });
 
 
         let page = await browser.newPage();

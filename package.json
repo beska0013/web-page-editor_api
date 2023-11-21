@@ -18,5 +18,8 @@
   "homepage": "https://github.com/beska0013/web-page-editor_api#readme",
   "dependencies": {
     "puppeteer": "^21.5.2"
+  },
+  "devDependencies": {
+    "@sparticuz/chromium": "^119.0.0"
   }
 }
