@@ -1,26 +1,32 @@
 import { Injectable } from '@nestjs/common';
-import { InjectBrowser, InjectPage } from 'nest-puppeteer';
 import { Browser, Page } from 'puppeteer';
+import puppeteer from 'puppeteer';
 
 @Injectable()
 export class ScraperService {
-  constructor(
-    @InjectPage() private readonly page: Page,
-    @InjectBrowser() private readonly browser: Browser,
-  ) {}
+  private browser: Browser;
+  constructor() { }
 
   async create(url: string) {
+    if (!this.browser) {
+      this.browser = await puppeteer.launch({
+        executablePath: `/usr/bin/chromium`,
+        args: [`--disable-gpu`, `--disable-setuid-sandbox`, `--no-sandbox`, `--no-zygote`]
+      })
+    }
+
+    const page = await this.browser.newPage();
     console.time('Execution Time'); // Start the timer
 
     const _URL_PATH = this.hasHttpOrHttpsProtocol(url) ? url : `https://${url}`;
 
     console.log('call for: ', _URL_PATH);
 
-    await this.page.goto(_URL_PATH, { waitUntil: 'domcontentloaded' });
+    await page.goto(_URL_PATH, { waitUntil: 'domcontentloaded' });
 
-    await this.autoScroll(this.page);
+    await this.autoScroll(page);
 
-    const htmlContent = await this.page.content();
+    const htmlContent = await page.content();
 
     const headContent = await this.getHeadContent(htmlContent);
 
@@ -36,7 +42,7 @@ export class ScraperService {
     };
     console.timeEnd('Execution Time'); // End the timer and log the time
     const html = { htmlContent:`<!DOCTYPE html><html lang="en"><head>${headContent}<style>${CSSContent.join()}</style></head><body>${bodyContent}</body></html>`};
-
+    await page.close();
     return html;
   }
 

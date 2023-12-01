@@ -5,17 +5,12 @@ import { AppService } from './app.service';
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  @Get()
-  getHello(): string {
-    return this.appService.getHello();
-  }
-
-  @Post('scrap')
+  @Post('v1/web-scrapper')
   scrapWeb(@Body() body: { url: string }) {
     return this.appService.scrapWeb(body.url);
   }
 
-  @Get('web')
+  @Get('v1/web-scrapper')
   scrapWeb2(@Query('url') url: string) {
     return this.appService.scrapWeb(url);
   }

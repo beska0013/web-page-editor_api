@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ScraperService } from './scraper.service';
-import { PuppeteerModule } from 'nest-puppeteer';
 
 @Module({
   imports: [],
