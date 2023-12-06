@@ -1,8 +1,25 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import * as compression from 'compression';
+import * as express from 'express';
+import { JSDOM } from 'jsdom';
+
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: true });
+  const app = await NestFactory.create(AppModule);
+  app.enableCors({
+    origin: 'http://localhost:8080',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+  });
+
+  const { window } = new JSDOM('<!DOCTYPE html><html><body></body></html>');
+  global.window = window as unknown as Window & typeof globalThis;
+  global.document = window.document;
+  global.DOMParser = new JSDOM().window.DOMParser;
+
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
   await app.listen(3000).then(() => {
     console.log('Server is running on http://localhost:3000');
   });

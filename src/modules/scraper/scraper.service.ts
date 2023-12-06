@@ -1,19 +1,60 @@
 import { Injectable } from '@nestjs/common';
-import { Browser, Page } from 'puppeteer';
+import { Browser } from 'puppeteer';
 import puppeteer from 'puppeteer';
+import { InjectModel } from '@nestjs/sequelize';
+import { TargetPageModel } from '../../models/targetPage.model';
+
+import * as grapesjs from 'grapesjs';
+import { Component, Editor } from 'grapesjs';
+import { createHash } from 'crypto';
+import { compress, decompress } from 'compress-json';
 
 @Injectable()
 export class ScraperService {
   private browser: Browser;
-  constructor() { }
+  private _project_fonts: Set<any> = new Set();
+  private _project_classes: Set<any> = new Set();
+  private _deprecateFontKeyWords = [
+    'inherit',
+    'serif',
+    'monospace',
+    'cursive',
+    'sans-serif',
+    '!important',
+  ];
+  private _defaultFnNames = [
+    'Arial',
+    'Helvetica',
+    'Times New Roman',
+    'Times',
+    'Courier New',
+    'Courier',
+    'Verdana',
+    'Georgia',
+    'Comic Sans MS',
+    'Trebuchet MS',
+    'Arial Black',
+    'Impact',
+  ];
+
+  constructor(
+    @InjectModel(TargetPageModel)
+    private _targetPageData: typeof TargetPageModel,
+  ) {}
 
   async create(url: string) {
     if (!this.browser) {
       this.browser = await puppeteer.launch({
         executablePath: `/usr/bin/chromium`,
-        args: [`--disable-gpu`, `--disable-setuid-sandbox`, `--no-sandbox`, `--no-zygote`]
-      })
+        args: [
+          `--disable-gpu`,
+          `--disable-setuid-sandbox`,
+          `--no-sandbox`,
+          `--no-zygote`,
+        ],
+      });
     }
+    const hash = createHash('sha256').update(url).digest('hex');
 
     const page = await this.browser.newPage();
     console.time('Execution Time'); // Start the timer
@@ -34,16 +75,121 @@ export class ScraperService {
 
     const bodyContent = this.getBodyContent(htmlContent);
 
-    const result = {
-      //htmlContent,
-      CSSContent,
-      headContent,
-      bodyContent,
-    };
-    console.timeEnd('Execution Time'); // End the timer and log the time
-    const html = { htmlContent:`<!DOCTYPE html><html lang="en"><head>${headContent}<style>${CSSContent.join()}</style></head><body>${bodyContent}</body></html>`};
+    const htmlResult = `<!DOCTYPE html><html lang="en"><head>${headContent}<style>${CSSContent.join()}</style></head><body>${bodyContent}</body></html>`;
+
+    const projectData = this.createProjectData(htmlResult);
+
+    console.timeEnd('Execution Time');
+
     await page.close();
-    return html;
+
+    return this.createTargetPageData({
+      targetPage: url,
+      hash,
+      targetData: projectData.projectData,
+      projectFonts: projectData.projectFonts,
+      projectClasses: projectData.projectClasses,
+    });
+  }
+
+  private createProjectData(html: string) {
+    const editor = grapesjs['init']({
+      container: document.createElement('div'), // Dummy element
+      components: html,
+      height: '1px',
+      width: '1px',
+      storageManager: false,
+      undoManager: false,
+      avoidInlineStyle: true,
+      plugins: [],
+    });
+
+    const projectFonts = this.getProjectFonts(editor);
+    const projectClasses = this.getAllProjectClasses(
+      editor.getComponents().models,
+    );
+    const projectAssets = this.loadAssets(editor.getComponents().models);
+    projectAssets.forEach((asset: string) => {
+      editor.AssetManager.add(asset);
+    });
+
+    const projectData = JSON.stringify(compress(editor.getProjectData()));
+
+    // global.window = undefined;
+    // global.document = undefined;
+    // global.DOMParser = undefined;
+
+    return {
+      projectData,
+      projectFonts,
+      projectClasses,
+    };
+  }
+
+  private getProjectFonts(editor: Editor): string[] {
+    editor.CssComposer.getAll().forEach((rule: any) => {
+      const style = rule.getStyle();
+      if (style.hasOwnProperty('font-family')) {
+        const font = style['font-family'].replace(/['"]+/g, '').split(',');
+        font.forEach((f: string) => {
+          const fontName = f.trim();
+          if (
+            !this._deprecateFontKeyWords.some((keyword) =>
+              fontName.includes(keyword),
+            )
+          ) {
+            this._project_fonts.add(fontName);
+          }
+        });
+      }
+    });
+
+    this._defaultFnNames.forEach((font: string) => {
+      this._project_fonts.add(font);
+    });
+
+    return Array.from(this._project_fonts);
+  }
+
+  private loadAssets(components: Component[]) {
+    const projectAssets: string[] = [];
+    const stack: Component[] = [...components];
+    while (stack.length > 0) {
+      const currentComponent = stack.pop() as Component;
+      const type = currentComponent.get('type');
+
+      if (type === 'image') {
+        const src = currentComponent.get('src');
+        projectAssets.push(src);
+      }
+
+      const children = currentComponent.components();
+      if (children.length) {
+        stack.push(...children.models);
+      }
+    }
+
+    // [...projectAssets].forEach((asset: string) => {
+    //   this.editor.AssetManager.add(asset);
+    // });
+    return projectAssets;
+  }
+
+  private getAllProjectClasses(components: Component[]): string[] {
+    components.forEach((component: Component) => {
+      const selectors = component.get('classes');
+      if (selectors.length === 0) return;
+
+      selectors.each((selector: any) => {
+        this._project_classes.add(selector.get('name'));
+      });
+      const children = component.components();
+      if (children.length) {
+        this.getAllProjectClasses(children.models);
+      }
+    });
+
+    return Array.from(this._project_classes);
   }
 
   private hasHttpOrHttpsProtocol(url: string) {
@@ -104,66 +250,32 @@ export class ScraperService {
     return match ? match[1].trim() : '';
   }
 
-  private testFunc() {
-    // const linkTagRegex =
-    //   /<link\s+[^>]*?rel=["']stylesheet["'][^>]*?href=["'](.*?)["'][^>]*?>/g;
-    // const headTagRegex = /<head[^>]*>([\s\S]*?)<\/head>/i;
-    // const bodyTagRegex = /<body[^>]*>([\s\S]*?)<\/body>/i;
-    // const scriptTagRegex =
-    //   /<script\s+src=["'](.*?)["'][^>]*?>[^<]*?<\/script>/g;
-    //
-    // let match: string[];
-    // let headContent = '';
-    // let bodyContent = '';
-    //
-    // const stylesheetLinks = [];
-    // const scriptLinks = [];
-    //
-    // match = bodyTagRegex.exec(htmlContent);
-    //
-    // if (match) {
-    //   bodyContent = match[1].trim();
-    // }
-    //
-    // while ((match = linkTagRegex.exec(htmlContent)) !== null) {
-    //   stylesheetLinks.push(match[1]);
-    // }
-    //
-    // while ((match = scriptTagRegex.exec(bodyContent)) !== null) {
-    //   scriptLinks.push(match[1]);
-    // }
-    //
-    // match = headTagRegex.exec(htmlContent);
-    //
-    // if (match) {
-    //   headContent = match[1].trim();
-    // }
-    //
-    // match = bodyTagRegex.exec(htmlContent);
-    // if (match) {
-    //   bodyContent = match[1].trim();
-    // }
-    //
-    // const CSSContent = await Promise.all([
-    //   ...stylesheetLinks.map(async (link: any) => {
-    //     const response = await fetch(link);
-    //     return await response.text();
-    //   }),
-    // ]);
-    // const JSContent = await Promise.all(
-    //   scriptLinks.map(async (link) => {
-    //     try {
-    //       const response = await fetch(link);
-    //       return await response.text();
-    //     } catch (error) {
-    //       console.error(`Error fetching JS from ${link}:`, error);
-    //       return '';
-    //     }
-    //   }),
-    // );
-    //
-    // const html = `<!DOCTYPE html><html lang="en"><head><style>${CSSContent.join()}</style>${headContent}</head><body>${bodyContent}<script>${JSContent.join(
-    //   '\n',
-    // )}</script></body></html>`;
+  async createTargetPageData(data: {
+    targetPage: string;
+    hash: string;
+    targetData: any;
+    projectFonts: string[];
+    projectClasses: string[];
+  }) {
+    const res = await this._targetPageData.create({
+      projectTarget: data.targetPage,
+      projectHash: data.hash,
+      projectData: data.targetData,
+      projectFonts: data.projectFonts,
+      projectClasses: data.projectClasses,
+    });
+    const decompressedData = decompress(JSON.parse(res.projectData));
+    return {
+      projectFonts: res.projectFonts,
+      projectClasses: res.projectClasses,
+      projectData: decompressedData,
+    };
+  }
+
+  getTargetPageData(projectHash: string, projectTarget: string) {
+    return this._targetPageData.findOne({
+      where: { projectHash, projectTarget },
+      attributes: ['projectData', 'projectFonts', 'projectClasses'],
+    });
   }
 }

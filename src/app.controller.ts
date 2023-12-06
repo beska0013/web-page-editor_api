@@ -5,13 +5,13 @@ import { AppService } from './app.service';
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  @Post('v1/web-scrapper')
-  scrapWeb(@Body() body: { url: string }) {
-    return this.appService.scrapWeb(body.url);
-  }
-
   @Get('v1/web-scrapper')
   scrapWeb2(@Query('url') url: string) {
     return this.appService.scrapWeb(url);
   }
+
+  // @Post('v1/target-page')
+  // createTargetPageData(@Body() body: any, @Query('url') url: string) {
+  //   return this.appService.createTargetPageData(body, url);
+  // }
 }
