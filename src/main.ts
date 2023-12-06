@@ -4,16 +4,21 @@ import * as compression from 'compression';
 import * as express from 'express';
 import { JSDOM } from 'jsdom';
 
-
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({
-    origin: 'http://localhost:8080',
+    origin: [
+      'http://localhost:8080',
+      'https://www.intempt.com/',
+      'https://intempt.com/',
+    ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
 
-  const { window } = new JSDOM('<!DOCTYPE html><html><body></body></html>');
+  const { window } = new JSDOM(
+    '<!DOCTYPE html><html><body></body></html>',
+  );
   global.window = window as unknown as Window & typeof globalThis;
   global.document = window.document;
   global.DOMParser = new JSDOM().window.DOMParser;

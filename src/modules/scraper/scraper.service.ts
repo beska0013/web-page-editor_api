@@ -5,7 +5,7 @@ import { InjectModel } from '@nestjs/sequelize';
 import { TargetPageModel } from '../../models/targetPage.model';
 
 import * as grapesjs from 'grapesjs';
-import { Component, Editor } from 'grapesjs';
+import { Component, Components, Editor } from 'grapesjs';
 import { createHash } from 'crypto';
 import { compress, decompress } from 'compress-json';
 
@@ -113,6 +113,8 @@ export class ScraperService {
       editor.AssetManager.add(asset);
     });
 
+    this.assignIdsToComponents(editor.getComponents().models);
+
     const projectData = JSON.stringify(compress(editor.getProjectData()));
 
     // global.window = undefined;
@@ -124,6 +126,21 @@ export class ScraperService {
       projectFonts,
       projectClasses,
     };
+  }
+
+  private assignIdsToComponents(components: Components) {
+    let count = 0;
+    const idPrefix = 'cmp';
+    const stack = [...components];
+
+    while (stack.length > 0) {
+      const currentComponent = stack.pop();
+      currentComponent.addAttributes({ id: `${idPrefix}-${count++}` });
+
+      currentComponent.components().each((child) => {
+        stack.push(child);
+      });
+    }
   }
 
   private getProjectFonts(editor: Editor): string[] {
