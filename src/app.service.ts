@@ -3,15 +3,13 @@ import { ScraperService } from './modules/scraper/scraper.service';
 import { createHash } from 'crypto';
 import { decompress } from 'compress-json';
 
-
-
 @Injectable()
 export class AppService {
   constructor(private scraper: ScraperService) {}
 
   async scrapWeb(url: string) {
     const response = await this.getTargetPageData(url);
-    return !!response ? response : this.scraper.create(url);
+    return !!response ? response : this.createTargetProject(url);
   }
 
   async getTargetPageData(targetPage: string) {
@@ -23,5 +21,20 @@ export class AppService {
       ...res.toJSON(),
       projectData: decompressedData,
     };
+  }
+
+  async createTargetProject(targetPageUrl: string) {
+    const hash = createHash('sha256').update(targetPageUrl).digest('hex');
+    const targetPage = await this.scraper.getTargetPageData(
+      hash,
+      targetPageUrl,
+    );
+    const targetPageExists = !!targetPage;
+    return targetPageExists
+      ? {
+          ...targetPage.toJSON(),
+          projectData: decompress(JSON.parse(targetPage.projectData)),
+        }
+      : this.scraper.create(targetPageUrl);
   }
 }

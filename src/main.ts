@@ -12,7 +12,7 @@ async function bootstrap() {
       'https://www.intempt.com/',
       'https://intempt.com/',
     ],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    methods: 'GET, POST',
     credentials: true,
   });
 

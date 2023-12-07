@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { AppService } from './app.service';
 
 @Controller()
@@ -6,8 +6,13 @@ export class AppController {
   constructor(private readonly appService: AppService) {}
 
   @Get('v1/web-scrapper')
-  scrapWeb2(@Query('url') url: string) {
+  scrapWeb(@Query('url') url: string) {
+    console.log(url);
     return this.appService.scrapWeb(url);
   }
 
+  @Post('v1/web-scrapper')
+  createTargetProject(@Body() body: { url: string }) {
+    return this.appService.createTargetProject(body.url);
+  }
 }
