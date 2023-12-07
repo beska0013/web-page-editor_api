@@ -7,7 +7,6 @@ export class AppController {
 
   @Get('v1/web-scrapper')
   scrapWeb(@Query('url') url: string) {
-    console.log(url);
     return this.appService.scrapWeb(url);
   }
 
