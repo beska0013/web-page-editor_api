@@ -16,9 +16,7 @@ async function bootstrap() {
     credentials: true,
   });
 
-  const { window } = new JSDOM(
-    '<!DOCTYPE html><html><body></body></html>',
-  );
+  const { window } = new JSDOM('<!DOCTYPE html><html><body></body></html>');
   global.window = window as unknown as Window & typeof globalThis;
   global.document = window.document;
   global.DOMParser = new JSDOM().window.DOMParser;
