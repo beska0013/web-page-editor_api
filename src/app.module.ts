@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ScraperModule } from './modules/scraper/scraper.module';
 import { SequelizeModule } from '@nestjs/sequelize';
+import { FacetModule } from './modules/facet/facet.module';
 import * as process from 'process';
 
 @Module({
@@ -22,6 +23,7 @@ import * as process from 'process';
       },
     }),
     ScraperModule,
+    FacetModule,
   ],
   controllers: [AppController],
   providers: [AppService],

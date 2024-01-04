@@ -12,11 +12,13 @@ async function bootstrap() {
       'https://www.intempt.com/',
       'https://intempt.com/',
     ],
-    methods: 'GET, POST',
+    methods: 'GET, POST, PUT',
     credentials: true,
   });
 
-  const { window } = new JSDOM('<!DOCTYPE html><html><body></body></html>');
+  const { window } = new JSDOM(
+    '<!DOCTYPE html><html lang="en"><body></body></html>',
+  );
   global.window = window as unknown as Window & typeof globalThis;
   global.document = window.document;
   global.DOMParser = new JSDOM().window.DOMParser;
@@ -35,4 +37,4 @@ async function bootstrap() {
     }),
   );
 }
-bootstrap();
+bootstrap().then((r) => r);

@@ -5,14 +5,14 @@ import { InjectModel } from '@nestjs/sequelize';
 import { TargetPageModel } from '../../models/targetPage.model';
 
 import * as grapesjs from 'grapesjs';
-import { Component, Components, Editor } from 'grapesjs';
+import { Component, Editor } from 'grapesjs';
 import { createHash } from 'crypto';
 import { compress, decompress } from 'compress-json';
+import { CreateTargetPageType } from '../../../types/CreateTargetPage.type';
 
 @Injectable()
 export class ScraperService {
   private browser: Browser;
-  private _project_fonts: Set<any> = new Set();
   private _project_classes: Set<any> = new Set();
   private _deprecateFontKeyWords = [
     'inherit',
@@ -22,6 +22,7 @@ export class ScraperService {
     'sans-serif',
     '!important',
   ];
+
   private _defaultFnNames = [
     'Arial',
     'Helvetica',
@@ -42,7 +43,16 @@ export class ScraperService {
     private _targetPageData: typeof TargetPageModel,
   ) {}
 
+  getTargetPageData(projectHash: string, projectTarget: string) {
+    return this._targetPageData.findOne({
+      where: { projectHash, projectTarget },
+      attributes: ['projectData', 'projectFonts', 'projectClasses'],
+    });
+  }
+
   async create(url: string) {
+    const domParser = new DOMParser();
+
     if (!this.browser) {
       this.browser = await puppeteer.launch({
         executablePath: `/usr/bin/chromium`,
@@ -57,31 +67,55 @@ export class ScraperService {
     const hash = createHash('sha256').update(url).digest('hex');
 
     const page = await this.browser.newPage();
-    console.time('Execution Time'); // Start the timer
+    console.time('--TOTAL-- EXECUTION TIME');
 
     const _URL_PATH = this.hasHttpOrHttpsProtocol(url) ? url : `https://${url}`;
 
     console.log('call for: ', _URL_PATH);
 
-    await page.goto(_URL_PATH, { waitUntil: 'domcontentloaded' });
+    console.time('--UTILS-- EXECUTION TIME');
+
+    await page.goto(_URL_PATH, {
+      waitUntil: 'domcontentloaded',
+    });
 
     await this.autoScroll(page);
 
     const htmlContent = await page.content();
 
-    const headContent = await this.getHeadContent(htmlContent);
+    const doc = domParser.parseFromString(htmlContent, 'text/html');
 
-    const CSSContent = await this.getStyles(headContent);
+    const [headTag] = doc.getElementsByTagName('head');
 
-    const bodyContent = this.getBodyContent(htmlContent);
+    const [body] = doc.getElementsByTagName('body');
 
-    const htmlResult = `<!DOCTYPE html><html lang="en"><head>${headContent}<style>${CSSContent.join()}</style></head><body>${bodyContent}</body></html>`;
+    console.time('--CSSContent-- EXECUTION TIME');
+    const CSSContent = await this.getStyles(headTag, body, _URL_PATH);
+    console.timeEnd('--CSSContent-- EXECUTION TIME');
 
-    const projectData = this.createProjectData(htmlResult);
+    console.time('--bodyContent-- EXECUTION TIME');
+    const bodyContent = this.generateBodyContent(body);
+    console.timeEnd('--bodyContent-- EXECUTION TIME');
 
-    console.timeEnd('Execution Time');
+    const htmlResult = this.generateParsedHtml(CSSContent, bodyContent);
+    //const bodyResult = this.buildElementStructure(bodyContent);
+
+    console.timeEnd('--UTILS-- EXECUTION TIME');
+
+    console.log('--createProjectData-- START');
+    console.time('--createProjectData-- EXECUTION TIME');
+    const projectData = this.createProjectData(
+      htmlResult,
+      CSSContent,
+      bodyContent,
+    );
+    console.timeEnd('--createProjectData-- EXECUTION TIME');
+
+    console.timeEnd('--TOTAL-- EXECUTION TIME');
 
     await page.close();
+
+    // return htmlResult;
 
     return this.createTargetPageData({
       targetPage: url,
@@ -92,34 +126,44 @@ export class ScraperService {
     });
   }
 
-  private createProjectData(html: string) {
-    const editor = grapesjs['init']({
-      container: document.createElement('div'), // Dummy element
+  private generateParsedHtml(styles: string[], body: string) {
+    return `<html lang="en"><head>${styles.join(' ')}</head>${body}</html>`;
+  }
+
+  private createProjectData(html: string, styles: string[], body: string) {
+    console.time('--grapesjs init-- EXECUTION TIME');
+    const editor: Editor = grapesjs['init']({
       components: html,
-      height: '1px',
-      width: '1px',
       storageManager: false,
       undoManager: false,
       avoidInlineStyle: true,
-      plugins: [],
+      autorender: false,
+      headless: true,
     });
 
+    console.timeEnd('--grapesjs init-- EXECUTION TIME');
+
+    console.time('--getProjectFonts-- EXECUTION TIME');
     const projectFonts = this.getProjectFonts(editor);
+    console.timeEnd('--getProjectFonts-- EXECUTION TIME');
+
+    console.time('--getAllProjectClasses-- EXECUTION TIME');
     const projectClasses = this.getAllProjectClasses(
       editor.getComponents().models,
     );
-    const projectAssets = this.loadAssets(editor.getComponents().models);
-    projectAssets.forEach((asset: string) => {
-      editor.AssetManager.add(asset);
-    });
+    console.timeEnd('--getAllProjectClasses-- EXECUTION TIME');
 
-    this.assignIdsToComponents(editor.getComponents().models);
+    console.time('--loadAssets-- EXECUTION TIME');
+    const assets = this.loadAssets(editor);
+    console.timeEnd('--loadAssets-- EXECUTION TIME');
 
-    const projectData = JSON.stringify(compress(editor.getProjectData()));
+    // console.time('--assignIdsToComponents-- EXECUTION TIME');
+    // this.assignIdsToComponents(editor.getComponents().models);
+    // console.timeEnd('--assignIdsToComponents-- EXECUTION TIME');
 
-    // global.window = undefined;
-    // global.document = undefined;
-    // global.DOMParser = undefined;
+    console.time('--compress editor.getProjectData-- EXECUTION TIME');
+    const projectData = JSON.stringify(compress({ body, styles, assets }));
+    console.timeEnd('--compress editor.getProjectData-- EXECUTION TIME');
 
     return {
       projectData,
@@ -128,26 +172,36 @@ export class ScraperService {
     };
   }
 
-  private assignIdsToComponents(components: Components) {
+  private assignIdsToComponents(components: Component[]) {
     let count = 0;
-    const idPrefix = 'cmp';
+    const idPrefix = 'intempt-cmp';
     const stack = [...components];
 
     while (stack.length > 0) {
       const currentComponent = stack.pop();
-      currentComponent.addAttributes({ id: `${idPrefix}-${count++}` });
 
-      currentComponent.components().each((child) => {
-        stack.push(child);
-      });
+      if (currentComponent) {
+        currentComponent.addAttributes({ id: `${idPrefix}-${count++}` });
+
+        const cmpChildren = currentComponent.components();
+
+        for (let i = 0; i < cmpChildren.length; i++) {
+          if (cmpChildren[i]) {
+            stack.push(cmpChildren[i]);
+          }
+        }
+      }
     }
   }
 
   private getProjectFonts(editor: Editor): string[] {
+    const _project_fonts: Set<any> = new Set(this._defaultFnNames);
+    const fontProperty = 'font-family';
+
     editor.CssComposer.getAll().forEach((rule: any) => {
       const style = rule.getStyle();
-      if (style.hasOwnProperty('font-family')) {
-        const font = style['font-family'].replace(/['"]+/g, '').split(',');
+      if (style.hasOwnProperty(fontProperty)) {
+        const font = style[fontProperty].replace(/['"]+/g, '').split(',');
         font.forEach((f: string) => {
           const fontName = f.trim();
           if (
@@ -155,41 +209,36 @@ export class ScraperService {
               fontName.includes(keyword),
             )
           ) {
-            this._project_fonts.add(fontName);
+            _project_fonts.add(fontName);
           }
         });
       }
     });
-
-    this._defaultFnNames.forEach((font: string) => {
-      this._project_fonts.add(font);
-    });
-
-    return Array.from(this._project_fonts);
+    return Array.from(_project_fonts);
   }
 
-  private loadAssets(components: Component[]) {
-    const projectAssets: string[] = [];
+  private loadAssets(editor: Editor) {
+    const components = editor.getComponents().models;
     const stack: Component[] = [...components];
+    const srcSet = new Set<string>();
+
     while (stack.length > 0) {
       const currentComponent = stack.pop() as Component;
       const type = currentComponent.get('type');
 
       if (type === 'image') {
         const src = currentComponent.get('src');
-        projectAssets.push(src);
-      }
+        //editor.AssetManager.add(src);
+        srcSet.add(src);
+      } else {
+        const children = currentComponent.components();
 
-      const children = currentComponent.components();
-      if (children.length) {
-        stack.push(...children.models);
+        if (children.length > 0) {
+          stack.push(...children.models);
+        }
       }
     }
-
-    // [...projectAssets].forEach((asset: string) => {
-    //   this.editor.AssetManager.add(asset);
-    // });
-    return projectAssets;
+    return Array.from(srcSet);
   }
 
   private getAllProjectClasses(components: Component[]): string[] {
@@ -227,53 +276,134 @@ export class ScraperService {
             clearInterval(timer);
             resolve();
           }
-        }, 160);
+        }, 200);
       });
     });
   }
 
-  private async getStyles(htmlContent: string) {
-    const stylesheetLinks = [];
-    const linkTagRegex = /<link[^>]*href=["']([^"']*?\.css[^"']*)["']/gi;
+  private generateBodyContent(body: HTMLBodyElement) {
+    const TEXT_NODE = 3;
+    const COMMENT_NODE = 8;
+    const ELEMENT_NODE = 1;
 
-    let match: string[];
+    //TODO: remove script tags ---->
+    const scriptTagsToRemove = body.querySelectorAll('script');
+    scriptTagsToRemove.forEach((script) => (!!script ? script.remove() : null));
+    //TODO: remove script tags ----<
 
-    while ((match = linkTagRegex.exec(htmlContent)) !== null) {
-      console.log('Matched URL:', match[1]);
-      stylesheetLinks.push(match[1] || match[2]);
+    //TODO: remove noscript tags ---->
+    const noscriptTagsToRemove = body.querySelectorAll('noscript');
+    noscriptTagsToRemove.forEach((noscript) =>
+      !!noscript ? noscript.remove() : null,
+    );
+    //TODO: remove noscript tags ----<
+
+    //TODO: remove style tags ---->
+    const styleTagsToRemove = body.querySelectorAll('style');
+    styleTagsToRemove.forEach((style) => (!!style ? style.remove() : null));
+    //TODO: remove style tags ----<
+
+    //TODO: remove link tags ---->
+    const linkTagsToRemove = body.querySelectorAll('link');
+    linkTagsToRemove.forEach((style) => (!!style ? style.remove() : null));
+    //TODO: remove link tags ----<
+
+    const stack: {
+      element: Element | ChildNode;
+      parentId: string;
+      index: number;
+    }[] = [{ element: body, parentId: '0', index: 0 }];
+
+    while (stack.length > 0) {
+      const { element, parentId, index } = stack.pop();
+      const selfId = `${parentId}:${index}`;
+
+      if (element.nodeType === COMMENT_NODE) {
+        //TODO: remove comments ---->
+        element.remove();
+        continue;
+      } else if (element.nodeType === TEXT_NODE) {
+        //TODO: trim text ---->
+        element.textContent = element.textContent.trim();
+      } else if (element.nodeType === ELEMENT_NODE) {
+        //TODO: add custom attribute identifier ---->
+        (element as Element).setAttribute('data-intempt-id', selfId);
+      }
+
+      const children = Array.from(element.childNodes);
+
+      for (let i = children.length - 1; i >= 0; i--) {
+        const child = children[i];
+        stack.push({ element: child, parentId: selfId, index: i });
+      }
     }
-    return stylesheetLinks.length > 0
-      ? await Promise.all([
-          ...stylesheetLinks.map(async (link: any) => {
-            const _URL_PATH = this.hasHttpOrHttpsProtocol(link)
-              ? link
-              : `https://${link}`;
-            const response = await fetch(_URL_PATH);
-            return await response.text();
-          }),
-        ])
-      : [];
+
+    return `${body.outerHTML}`;
   }
 
-  private getBodyContent(htmlContent: string) {
-    const bodyTagRegex = /<body[^>]*>([\s\S]*?)<\/body>/i;
-    const match = bodyTagRegex.exec(htmlContent);
-    return match ? match[1].trim() : '';
+  private async getStyles(
+    htmlContent: HTMLHeadElement,
+    body: HTMLBodyElement,
+    base_url: string,
+  ): Promise<string[]> {
+    const stylesUrls = new Set<string>();
+    const stylesTags = [];
+
+    //TODO: remove last slash ---->
+    const domainWithoutLastSlash = base_url.endsWith('/')
+      ? base_url.slice(0, -1)
+      : base_url;
+    //TODO: remove last slash ----<
+
+    const headStyleTags = htmlContent.querySelectorAll('style');
+    const bodyStyleTags = body.querySelectorAll('style');
+    const linkTags = htmlContent.querySelectorAll('link[rel="stylesheet"]');
+
+    for (let i = 0; i < linkTags.length; i++) {
+      const link = linkTags[i].getAttribute('href');
+      stylesUrls.add(link);
+    }
+
+    const stylesUrlsArray = Array.from(stylesUrls);
+    console.log('--DOMAIN--', domainWithoutLastSlash);
+
+    const linkTagStyles =
+      stylesUrlsArray.length > 0
+        ? await Promise.all(
+            stylesUrlsArray.map(async (link: string) => {
+              const _URL_PATH = this.hasHttpOrHttpsProtocol(link)
+                ? link
+                : this.parseLink(link, domainWithoutLastSlash);
+
+              console.log('--FETCHING--', _URL_PATH);
+
+              try {
+                const response = await fetch(_URL_PATH);
+                const css = await response.text();
+                return `<style data-css='${_URL_PATH}'>${css}</style>`;
+              } catch (error) {
+                console.error('--ERROR fetching--:', _URL_PATH, error);
+                return '';
+              }
+            }),
+          ).catch((error) => {
+            console.log('--ERROR--: ', error);
+            return [];
+          })
+        : [];
+
+    const styles = [...headStyleTags, ...bodyStyleTags];
+
+    for (let i = 0; i < styles.length; i++) {
+      const cssText = styles[i].textContent;
+      if (!!cssText) {
+        stylesTags.push(`<style>${cssText}</style>`);
+      }
+    }
+    return [...linkTagStyles, ...stylesTags];
   }
 
-  private async getHeadContent(htmlContent: string) {
-    const headTagRegex = /<head[^>]*>([\s\S]*?)<\/head>/i;
-    const match = headTagRegex.exec(htmlContent);
-    return match ? match[1].trim() : '';
-  }
-
-  async createTargetPageData(data: {
-    targetPage: string;
-    hash: string;
-    targetData: any;
-    projectFonts: string[];
-    projectClasses: string[];
-  }) {
+  private async createTargetPageData(data: CreateTargetPageType) {
     const res = await this._targetPageData.create({
       projectTarget: data.targetPage,
       projectHash: data.hash,
@@ -289,10 +419,40 @@ export class ScraperService {
     };
   }
 
-  getTargetPageData(projectHash: string, projectTarget: string) {
-    return this._targetPageData.findOne({
-      where: { projectHash, projectTarget },
-      attributes: ['projectData', 'projectFonts', 'projectClasses'],
-    });
+  buildElementStructure(element: any) {
+    // Object to hold the information about elements
+    const elementObj = {
+      html: element.outerHTML, // The HTML of the element itself
+      children: [], // An array to hold objects for each child
+    };
+    if (!!element.children) {
+      // Iterate over child elements and build their structure
+      Array.from(element.children).forEach((child) => {
+        elementObj.children.push(this.buildElementStructure(child)); // Recursive call for children
+      });
+    }
+
+    return elementObj;
+  }
+
+  parseLink(link: string, domain: string) {
+    const hostNameReg =
+      /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)+([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/im;
+
+    const baseURL = new URL(domain);
+    const protocol = 'https://';
+
+    const linkChunks = link.split('/').filter((chunk) => !!chunk);
+    const [potentialHostname] = linkChunks;
+
+    const parsedLink = linkChunks.join('/');
+
+    const condition =
+      hostNameReg.test(potentialHostname) ||
+      parsedLink.startsWith(baseURL.hostname);
+
+    return condition
+      ? `${protocol}${parsedLink}`
+      : `${protocol}${baseURL.hostname}/${parsedLink}`;
   }
 }
