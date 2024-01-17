@@ -13,6 +13,7 @@ export class AppService {
 
   async scrapWeb(url: string) {
     const response = await this.getTargetPageData(url);
+    console.log(response);
     return !!response ? response : this.createTargetProject(url);
   }
 

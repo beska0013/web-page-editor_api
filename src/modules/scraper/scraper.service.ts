@@ -94,7 +94,7 @@ export class ScraperService {
     console.timeEnd('--CSSContent-- EXECUTION TIME');
 
     console.time('--bodyContent-- EXECUTION TIME');
-    const bodyContent = this.generateBodyContent(body);
+    const bodyContent = this.generateBodyContent(body, _URL_PATH);
     console.timeEnd('--bodyContent-- EXECUTION TIME');
 
     const htmlResult = this.generateParsedHtml(CSSContent, bodyContent);
@@ -163,6 +163,7 @@ export class ScraperService {
 
     console.time('--compress editor.getProjectData-- EXECUTION TIME');
     const projectData = JSON.stringify(compress({ body, styles, assets }));
+    //const projectData = JSON.stringify({ body, styles, assets });
     console.timeEnd('--compress editor.getProjectData-- EXECUTION TIME');
 
     return {
@@ -281,10 +282,12 @@ export class ScraperService {
     });
   }
 
-  private generateBodyContent(body: HTMLBodyElement) {
+  private generateBodyContent(body: HTMLBodyElement, base_url: string) {
     const TEXT_NODE = 3;
     const COMMENT_NODE = 8;
     const ELEMENT_NODE = 1;
+    const hostNameReg =
+      /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)+([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/im;
 
     //TODO: remove script tags ---->
     const scriptTagsToRemove = body.querySelectorAll('script');
@@ -305,8 +308,33 @@ export class ScraperService {
 
     //TODO: remove link tags ---->
     const linkTagsToRemove = body.querySelectorAll('link');
-    linkTagsToRemove.forEach((style) => (!!style ? style.remove() : null));
+    linkTagsToRemove.forEach((linkTag) =>
+      !!linkTag ? linkTag.remove() : null,
+    );
     //TODO: remove link tags ----<
+
+    //TODO: replace img src with baseUrl if necessary ---->
+    const imgTags = body.querySelectorAll('img');
+    imgTags.forEach((imgTag) => {
+      //TODO: optimize img tags loading
+      imgTag.setAttribute('loading', 'lazy');
+
+      const link = imgTag.src;
+      const linkChunks = link.split('/').filter((chunk) => !!chunk);
+      const potentialHostname = linkChunks.find(
+        (l) => l !== 'http:' && l !== 'https:',
+      );
+
+      if (!!potentialHostname && !hostNameReg.test(potentialHostname)) {
+        const origin = base_url.endsWith('/')
+          ? base_url.slice(0, -1)
+          : base_url;
+        const imgUrl = linkChunks.join('/');
+
+        imgTag.src = `${origin}/${imgUrl}`;
+      }
+    });
+    //TODO: replace img src with baseUrl if necessary ----<
 
     const stack: {
       element: Element | ChildNode;
@@ -400,7 +428,34 @@ export class ScraperService {
         stylesTags.push(`<style>${cssText}</style>`);
       }
     }
+
     return [...linkTagStyles, ...stylesTags];
+  }
+
+  private replaceBackgroundUrls(css: string, baseUrl: string) {
+    const regex = /background(-image)?\s*:\s*url\((.*?)\)/g;
+    const hostNameReg =
+      /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)+([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/im;
+
+    return css.replace(regex, (match: string, p1: any, url: any) => {
+      url = url.replace(/["']/g, '');
+      const urlChunks = url.startsWith('/')
+        ? url.split('/').filter((chunk: string) => !!chunk)
+        : [];
+      const potentialHostname = urlChunks.find(
+        (l: string) => l !== 'http:' && l !== 'https:',
+      );
+
+      if (!!potentialHostname && !hostNameReg.test(potentialHostname)) {
+        const origin = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+        console.log(url);
+        const link = urlChunks.join('/');
+        url = `${origin}/${link}`;
+      }
+      //
+      // // Reconstruct the CSS rule with the possibly modified URL
+      return `background${p1 ? '-image' : ''}: url('${url}')`;
+    });
   }
 
   private async createTargetPageData(data: CreateTargetPageType) {

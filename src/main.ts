@@ -9,10 +9,11 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'http://localhost:8080',
-      'https://www.intempt.com/',
-      'https://intempt.com/',
+      'https://www.intempt.com',
+      'https://intempt.com',
     ],
-    methods: 'GET, POST, PUT',
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['*'],
     credentials: true,
   });
 
