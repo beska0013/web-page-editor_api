@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Browser } from 'puppeteer';
+import { Browser, Page } from 'puppeteer';
 import puppeteer from 'puppeteer';
 import { InjectModel } from '@nestjs/sequelize';
 import { TargetPageModel } from '../../models/targetPage.model';
@@ -9,6 +9,7 @@ import { Component, Editor } from 'grapesjs';
 import { createHash } from 'crypto';
 import { compress, decompress } from 'compress-json';
 import { CreateTargetPageType } from '../../../types/CreateTargetPage.type';
+import { potentialCookieButtonText } from '../../../util/cookieRecognizeData';
 
 @Injectable()
 export class ScraperService {
@@ -78,7 +79,9 @@ export class ScraperService {
     await page.goto(_URL_PATH, {
       waitUntil: 'domcontentloaded',
     });
-
+    console.time('--acceptCookieModal-- EXECUTION TIME');
+    await this.acceptCookieModal(page);
+    console.timeEnd('--acceptCookieModal-- EXECUTION TIME');
     await this.autoScroll(page);
 
     const htmlContent = await page.content();
@@ -173,28 +176,6 @@ export class ScraperService {
     };
   }
 
-  private assignIdsToComponents(components: Component[]) {
-    let count = 0;
-    const idPrefix = 'intempt-cmp';
-    const stack = [...components];
-
-    while (stack.length > 0) {
-      const currentComponent = stack.pop();
-
-      if (currentComponent) {
-        currentComponent.addAttributes({ id: `${idPrefix}-${count++}` });
-
-        const cmpChildren = currentComponent.components();
-
-        for (let i = 0; i < cmpChildren.length; i++) {
-          if (cmpChildren[i]) {
-            stack.push(cmpChildren[i]);
-          }
-        }
-      }
-    }
-  }
-
   private getProjectFonts(editor: Editor): string[] {
     const _project_fonts: Set<any> = new Set(this._defaultFnNames);
     const fontProperty = 'font-family';
@@ -263,7 +244,47 @@ export class ScraperService {
     return url.startsWith('http://') || url.startsWith('https://');
   }
 
-  private async autoScroll(page: any) {
+  private async acceptCookieModal(page: Page) {
+    const hasButtons = (await page.$('body button')) !== null;
+
+    if (!hasButtons) {
+      console.log('No buttons found on the page.');
+      return; // Exit the function if no buttons are present
+    }
+
+    await page.waitForSelector('body button');
+
+    await page.$$eval(
+      'body button',
+      (buttons, buttonTexts) => {
+        for (const button of buttons) {
+          const text = button.innerText;
+          if (buttonTexts.includes(text.trim())) {
+            let parent = button.parentElement;
+            while (parent) {
+              if (parent.innerText.toLowerCase().includes('cookie')) {
+                // Found a parent with 'cookie' in its text, click the button
+                const parentButtons = parent.getElementsByTagName('button');
+                for (const child of parentButtons) {
+                  if (child === button) {
+                    button.click();
+                    return; // Exit the loop and function once the button is clicked
+                  }
+                }
+              }
+              parent = parent.parentElement; // Move to the next parent
+            }
+            // button.click();
+
+
+          }
+        }
+      },
+      potentialCookieButtonText,
+    );
+  }
+
+  private async autoScroll(page: Page) {
     await page.evaluate(async () => {
       await new Promise<void>((resolve) => {
         let totalHeight = 0;
@@ -432,6 +453,54 @@ export class ScraperService {
     return [...linkTagStyles, ...stylesTags];
   }
 
+  private parseLink(link: string, domain: string) {
+    const protocol = 'https://';
+    const linkChunks = link.split('/').filter((chunk) => !!chunk);
+    const parsedLink = linkChunks.join('/');
+    try {
+      const newUrl = `${protocol}${parsedLink}`;
+
+      new URL(newUrl);
+
+      return newUrl;
+    } catch (error: any) {
+      const baseURL = new URL(domain);
+      return `${baseURL.origin}/${parsedLink}`;
+    }
+  }
+
+  private async createTargetPageData(data: CreateTargetPageType) {
+    const res = await this._targetPageData.create({
+      projectTarget: data.targetPage,
+      projectHash: data.hash,
+      projectData: data.targetData,
+      projectFonts: data.projectFonts,
+      projectClasses: data.projectClasses,
+    });
+    const decompressedData = decompress(JSON.parse(res.projectData));
+    return {
+      projectFonts: res.projectFonts,
+      projectClasses: res.projectClasses,
+      projectData: decompressedData,
+    };
+  }
+
+  private buildElementStructure(element: any) {
+    // Object to hold the information about elements
+    // const elementObj = {
+    //   html: element.outerHTML, // The HTML of the element itself
+    //   children: [], // An array to hold objects for each child
+    // };
+    // if (!!element.children) {
+    //   // Iterate over child elements and build their structure
+    //   Array.from(element.children).forEach((child) => {
+    //     elementObj.children.push(this.buildElementStructure(child)); // Recursive call for children
+    //   });
+    // }
+    //
+    // return elementObj;
+  }
+
   private replaceBackgroundUrls(css: string, baseUrl: string) {
     const regex = /background(-image)?\s*:\s*url\((.*?)\)/g;
     const hostNameReg =
@@ -458,56 +527,25 @@ export class ScraperService {
     });
   }
 
-  private async createTargetPageData(data: CreateTargetPageType) {
-    const res = await this._targetPageData.create({
-      projectTarget: data.targetPage,
-      projectHash: data.hash,
-      projectData: data.targetData,
-      projectFonts: data.projectFonts,
-      projectClasses: data.projectClasses,
-    });
-    const decompressedData = decompress(JSON.parse(res.projectData));
-    return {
-      projectFonts: res.projectFonts,
-      projectClasses: res.projectClasses,
-      projectData: decompressedData,
-    };
-  }
+  private assignIdsToComponents(components: Component[]) {
+    let count = 0;
+    const idPrefix = 'intempt-cmp';
+    const stack = [...components];
 
-  buildElementStructure(element: any) {
-    // Object to hold the information about elements
-    const elementObj = {
-      html: element.outerHTML, // The HTML of the element itself
-      children: [], // An array to hold objects for each child
-    };
-    if (!!element.children) {
-      // Iterate over child elements and build their structure
-      Array.from(element.children).forEach((child) => {
-        elementObj.children.push(this.buildElementStructure(child)); // Recursive call for children
-      });
+    while (stack.length > 0) {
+      const currentComponent = stack.pop();
+
+      if (currentComponent) {
+        currentComponent.addAttributes({ id: `${idPrefix}-${count++}` });
+
+        const cmpChildren = currentComponent.components();
+
+        for (let i = 0; i < cmpChildren.length; i++) {
+          if (cmpChildren[i]) {
+            stack.push(cmpChildren[i]);
+          }
+        }
+      }
     }
-
-    return elementObj;
-  }
-
-  parseLink(link: string, domain: string) {
-    const hostNameReg =
-      /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)+([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/im;
-
-    const baseURL = new URL(domain);
-    const protocol = 'https://';
-
-    const linkChunks = link.split('/').filter((chunk) => !!chunk);
-    const [potentialHostname] = linkChunks;
-
-    const parsedLink = linkChunks.join('/');
-
-    const condition =
-      hostNameReg.test(potentialHostname) ||
-      parsedLink.startsWith(baseURL.hostname);
-
-    return condition
-      ? `${protocol}${parsedLink}`
-      : `${protocol}${baseURL.hostname}/${parsedLink}`;
   }
 }

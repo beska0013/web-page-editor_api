@@ -10,20 +10,18 @@ export class AppController {
     return this.appService.scrapWeb(url);
   }
 
+  // @Post('web-scrapper')
+  // createTargetProject(@Body() body: { url: string }) {
+  //   return this.appService.createTargetProject(body.url);
+  // }
 
-
-  @Post('web-scrapper')
-  createTargetProject(@Body() body: { url: string }) {
-    return this.appService.createTargetProject(body.url);
-  }
-
-  @Get('facet')
-  getFacet(@Query('id') id: string) {
-    return this.appService.getFacet(id);
-  }
-
-  @Put('facet')
-  createFacet(@Body() { body }: any) {
-    return this.appService.createFacet(body);
-  }
+  // @Get('facet')
+  // getFacet(@Query('id') id: string) {
+  //   return this.appService.getFacet(id);
+  // }
+  //
+  // @Put('facet')
+  // createFacet(@Body() { body }: any) {
+  //   return this.appService.createFacet(body);
+  // }
 }

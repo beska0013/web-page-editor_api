@@ -14,7 +14,7 @@ async function bootstrap() {
     ],
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['*'],
-    credentials: true,
+    // credentials: true,
   });
 
   const { window } = new JSDOM(

@@ -13,12 +13,14 @@ export class AppService {
 
   async scrapWeb(url: string) {
     const response = await this.getTargetPageData(url);
-    console.log(response);
+
     return !!response ? response : this.createTargetProject(url);
   }
 
   async createTargetProject(targetPageUrl: string) {
     const hash = createHash('sha256').update(targetPageUrl).digest('hex');
+    console.log('createTargetProject', targetPageUrl);
+    console.log('createTargetProject', hash);
 
     const targetPage = await this.scraper.getTargetPageData(
       hash,
@@ -35,6 +37,9 @@ export class AppService {
 
   private async getTargetPageData(targetPage: string) {
     const hash = createHash('sha256').update(targetPage).digest('hex');
+
+    console.log('getTargetPageData', targetPage);
+    console.log('getTargetPageData', hash);
 
     const res = await this.scraper.getTargetPageData(hash, targetPage);
     if (!res) return null;
