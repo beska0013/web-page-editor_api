@@ -10,6 +10,12 @@ import { createHash } from 'crypto';
 import { compress, decompress } from 'compress-json';
 import { CreateTargetPageType } from '../../../types/CreateTargetPage.type';
 import { potentialCookieButtonText } from '../../../util/cookieRecognizeData';
+import isValidDomain from 'is-valid-domain';
+// import { isValidDomain } from 'is-valid-domain';
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires,@typescript-eslint/ban-ts-comment
+
+// const isValidDomain = require('is-valid-domain');
 
 @Injectable()
 export class ScraperService {
@@ -54,79 +60,89 @@ export class ScraperService {
   async create(url: string) {
     const domParser = new DOMParser();
 
-    if (!this.browser) {
-      this.browser = await puppeteer.launch({
-        executablePath: `/usr/bin/chromium`,
-        args: [
-          `--disable-gpu`,
-          `--disable-setuid-sandbox`,
-          `--no-sandbox`,
-          `--no-zygote`,
-        ],
+    try {
+      if (!this.browser) {
+        this.browser = await puppeteer.launch({
+          executablePath: `/usr/bin/chromium`,
+          args: [
+            `--disable-gpu`,
+            `--disable-setuid-sandbox`,
+            `--no-sandbox`,
+            `--no-zygote`,
+          ],
+        });
+      }
+      const hash = createHash('sha256').update(url).digest('hex');
+
+      const page = await this.browser.newPage();
+
+      await page.setExtraHTTPHeaders({
+        'ngrok-skip-browser-warning': 'true',
       });
+      console.time('--TOTAL-- EXECUTION TIME');
+
+      const _URL_PATH = this.hasHttpOrHttpsProtocol(url)
+        ? url
+        : `https://${url}`;
+
+      console.log('call for: ', _URL_PATH);
+
+      console.time('--UTILS-- EXECUTION TIME');
+
+      await page.goto(_URL_PATH, {
+        waitUntil: 'domcontentloaded',
+      });
+      console.time('--acceptCookieModal-- EXECUTION TIME');
+      await this.acceptCookieModal(page);
+      console.timeEnd('--acceptCookieModal-- EXECUTION TIME');
+      await this.autoScroll(page);
+
+      const htmlContent = await page.content();
+
+      const doc = domParser.parseFromString(htmlContent, 'text/html');
+
+      const [headTag] = doc.getElementsByTagName('head');
+
+      const [body] = doc.getElementsByTagName('body');
+
+      console.time('--CSSContent-- EXECUTION TIME');
+      const CSSContent = await this.getStyles(headTag, body, _URL_PATH);
+      console.timeEnd('--CSSContent-- EXECUTION TIME');
+
+      console.time('--bodyContent-- EXECUTION TIME');
+      const bodyContent = this.generateBodyContent(body, _URL_PATH);
+      console.timeEnd('--bodyContent-- EXECUTION TIME');
+
+      const htmlResult = this.generateParsedHtml(CSSContent, bodyContent);
+      //const bodyResult = this.buildElementStructure(bodyContent);
+
+      console.timeEnd('--UTILS-- EXECUTION TIME');
+
+      console.log('--createProjectData-- START');
+      console.time('--createProjectData-- EXECUTION TIME');
+      const projectData = this.createProjectData(
+        htmlResult,
+        CSSContent,
+        bodyContent,
+      );
+      console.timeEnd('--createProjectData-- EXECUTION TIME');
+
+      console.timeEnd('--TOTAL-- EXECUTION TIME');
+
+      await page.close();
+
+      // return CSSContent;
+
+      return this.createTargetPageData({
+        targetPage: url,
+        hash,
+        targetData: projectData.projectData,
+        projectFonts: projectData.projectFonts,
+        projectClasses: projectData.projectClasses,
+      });
+    } catch (error: any) {
+      return error;
     }
-    const hash = createHash('sha256').update(url).digest('hex');
-
-    const page = await this.browser.newPage();
-    console.time('--TOTAL-- EXECUTION TIME');
-
-    const _URL_PATH = this.hasHttpOrHttpsProtocol(url) ? url : `https://${url}`;
-
-    console.log('call for: ', _URL_PATH);
-
-    console.time('--UTILS-- EXECUTION TIME');
-
-    await page.goto(_URL_PATH, {
-      waitUntil: 'domcontentloaded',
-    });
-    console.time('--acceptCookieModal-- EXECUTION TIME');
-    await this.acceptCookieModal(page);
-    console.timeEnd('--acceptCookieModal-- EXECUTION TIME');
-    await this.autoScroll(page);
-
-    const htmlContent = await page.content();
-
-    const doc = domParser.parseFromString(htmlContent, 'text/html');
-
-    const [headTag] = doc.getElementsByTagName('head');
-
-    const [body] = doc.getElementsByTagName('body');
-
-    console.time('--CSSContent-- EXECUTION TIME');
-    const CSSContent = await this.getStyles(headTag, body, _URL_PATH);
-    console.timeEnd('--CSSContent-- EXECUTION TIME');
-
-    console.time('--bodyContent-- EXECUTION TIME');
-    const bodyContent = this.generateBodyContent(body, _URL_PATH);
-    console.timeEnd('--bodyContent-- EXECUTION TIME');
-
-    const htmlResult = this.generateParsedHtml(CSSContent, bodyContent);
-    //const bodyResult = this.buildElementStructure(bodyContent);
-
-    console.timeEnd('--UTILS-- EXECUTION TIME');
-
-    console.log('--createProjectData-- START');
-    console.time('--createProjectData-- EXECUTION TIME');
-    const projectData = this.createProjectData(
-      htmlResult,
-      CSSContent,
-      bodyContent,
-    );
-    console.timeEnd('--createProjectData-- EXECUTION TIME');
-
-    console.timeEnd('--TOTAL-- EXECUTION TIME');
-
-    await page.close();
-
-    // return htmlResult;
-
-    return this.createTargetPageData({
-      targetPage: url,
-      hash,
-      targetData: projectData.projectData,
-      projectFonts: projectData.projectFonts,
-      projectClasses: projectData.projectClasses,
-    });
   }
 
   private generateParsedHtml(styles: string[], body: string) {
@@ -134,46 +150,49 @@ export class ScraperService {
   }
 
   private createProjectData(html: string, styles: string[], body: string) {
-    console.time('--grapesjs init-- EXECUTION TIME');
-    const editor: Editor = grapesjs['init']({
-      components: html,
-      storageManager: false,
-      undoManager: false,
-      avoidInlineStyle: true,
-      autorender: false,
-      headless: true,
-    });
+    try {
+      console.time('--grapesjs init-- EXECUTION TIME');
+      const editor: Editor = grapesjs['init']({
+        components: html,
+        storageManager: false,
+        undoManager: false,
+        avoidInlineStyle: true,
+        autorender: false,
+        headless: true,
+      });
 
-    console.timeEnd('--grapesjs init-- EXECUTION TIME');
+      console.timeEnd('--grapesjs init-- EXECUTION TIME');
 
-    console.time('--getProjectFonts-- EXECUTION TIME');
-    const projectFonts = this.getProjectFonts(editor);
-    console.timeEnd('--getProjectFonts-- EXECUTION TIME');
+      console.time('--getProjectFonts-- EXECUTION TIME');
+      const projectFonts = this.getProjectFonts(editor);
+      console.timeEnd('--getProjectFonts-- EXECUTION TIME');
 
-    console.time('--getAllProjectClasses-- EXECUTION TIME');
-    const projectClasses = this.getAllProjectClasses(
-      editor.getComponents().models,
-    );
-    console.timeEnd('--getAllProjectClasses-- EXECUTION TIME');
+      console.time('--getAllProjectClasses-- EXECUTION TIME');
+      const projectClasses = this.getAllProjectClasses(
+        editor.getComponents().models,
+      );
+      console.timeEnd('--getAllProjectClasses-- EXECUTION TIME');
 
-    console.time('--loadAssets-- EXECUTION TIME');
-    const assets = this.loadAssets(editor);
-    console.timeEnd('--loadAssets-- EXECUTION TIME');
+      console.time('--loadAssets-- EXECUTION TIME');
+      const assets = this.loadAssets(editor);
+      console.timeEnd('--loadAssets-- EXECUTION TIME');
 
-    // console.time('--assignIdsToComponents-- EXECUTION TIME');
-    // this.assignIdsToComponents(editor.getComponents().models);
-    // console.timeEnd('--assignIdsToComponents-- EXECUTION TIME');
+      // console.time('--assignIdsToComponents-- EXECUTION TIME');
+      // this.assignIdsToComponents(editor.getComponents().models);
+      // console.timeEnd('--assignIdsToComponents-- EXECUTION TIME');
 
-    console.time('--compress editor.getProjectData-- EXECUTION TIME');
-    const projectData = JSON.stringify(compress({ body, styles, assets }));
-    //const projectData = JSON.stringify({ body, styles, assets });
-    console.timeEnd('--compress editor.getProjectData-- EXECUTION TIME');
+      console.time('--compress editor.getProjectData-- EXECUTION TIME');
+      const projectData = JSON.stringify(compress({ body, styles, assets }));
+      console.timeEnd('--compress editor.getProjectData-- EXECUTION TIME');
 
-    return {
-      projectData,
-      projectFonts,
-      projectClasses,
-    };
+      return {
+        projectData,
+        projectFonts,
+        projectClasses,
+      };
+    } catch (error: any) {
+      throw new Error(error);
+    }
   }
 
   private getProjectFonts(editor: Editor): string[] {
@@ -226,11 +245,18 @@ export class ScraperService {
   private getAllProjectClasses(components: Component[]): string[] {
     components.forEach((component: Component) => {
       const selectors = component.get('classes');
-      if (selectors.length === 0) return;
+      if (selectors.length > 0) {
+        selectors.each((selector: any) => {
+          this._project_classes.add(selector.get('name'));
+        });
+      }
 
-      selectors.each((selector: any) => {
-        this._project_classes.add(selector.get('name'));
-      });
+      // if (selectors.length === 0) return;
+      //
+      // selectors.each((selector: any) => {
+      //   this._project_classes.add(selector.get('name'));
+      // });
+
       const children = component.components();
       if (children.length) {
         this.getAllProjectClasses(children.models);
@@ -274,9 +300,6 @@ export class ScraperService {
               }
               parent = parent.parentElement; // Move to the next parent
             }
-            // button.click();
-
-
           }
         }
       },
@@ -431,7 +454,7 @@ export class ScraperService {
                 const css = await response.text();
                 return `<style data-css='${_URL_PATH}'>${css}</style>`;
               } catch (error) {
-                console.error('--ERROR fetching--:', _URL_PATH, error);
+                console.error('--ERROR fetching--:', _URL_PATH);
                 return '';
               }
             }),
@@ -456,9 +479,19 @@ export class ScraperService {
   private parseLink(link: string, domain: string) {
     const protocol = 'https://';
     const linkChunks = link.split('/').filter((chunk) => !!chunk);
+    const [potentialDomain] = linkChunks;
     const parsedLink = linkChunks.join('/');
+    // console.log(
+    //   potentialDomain,
+    //   isValidDomain(potentialDomain, { subdomain: true }),
+    // );
     try {
-      const newUrl = `${protocol}${parsedLink}`;
+      let newUrl = `${protocol}${parsedLink}`;
+
+      if (!isValidDomain(potentialDomain)) {
+        const baseURL = new URL(domain);
+        newUrl = `${baseURL.origin}/${parsedLink}`;
+      }
 
       new URL(newUrl);
 
@@ -483,22 +516,6 @@ export class ScraperService {
       projectClasses: res.projectClasses,
       projectData: decompressedData,
     };
-  }
-
-  private buildElementStructure(element: any) {
-    // Object to hold the information about elements
-    // const elementObj = {
-    //   html: element.outerHTML, // The HTML of the element itself
-    //   children: [], // An array to hold objects for each child
-    // };
-    // if (!!element.children) {
-    //   // Iterate over child elements and build their structure
-    //   Array.from(element.children).forEach((child) => {
-    //     elementObj.children.push(this.buildElementStructure(child)); // Recursive call for children
-    //   });
-    // }
-    //
-    // return elementObj;
   }
 
   private replaceBackgroundUrls(css: string, baseUrl: string) {
@@ -527,25 +544,42 @@ export class ScraperService {
     });
   }
 
-  private assignIdsToComponents(components: Component[]) {
-    let count = 0;
-    const idPrefix = 'intempt-cmp';
-    const stack = [...components];
-
-    while (stack.length > 0) {
-      const currentComponent = stack.pop();
-
-      if (currentComponent) {
-        currentComponent.addAttributes({ id: `${idPrefix}-${count++}` });
-
-        const cmpChildren = currentComponent.components();
-
-        for (let i = 0; i < cmpChildren.length; i++) {
-          if (cmpChildren[i]) {
-            stack.push(cmpChildren[i]);
-          }
-        }
-      }
-    }
-  }
+  // private buildElementStructure(element: any) {
+  //   // Object to hold the information about elements
+  //   // const elementObj = {
+  //   //   html: element.outerHTML, // The HTML of the element itself
+  //   //   children: [], // An array to hold objects for each child
+  //   // };
+  //   // if (!!element.children) {
+  //   //   // Iterate over child elements and build their structure
+  //   //   Array.from(element.children).forEach((child) => {
+  //   //     elementObj.children.push(this.buildElementStructure(child)); // Recursive call for children
+  //   //   });
+  //   // }
+  //   //
+  //   // return elementObj;
+  // }
+  //
+  //
+  // private assignIdsToComponents(components: Component[]) {
+  //   let count = 0;
+  //   const idPrefix = 'intempt-cmp';
+  //   const stack = [...components];
+  //
+  //   while (stack.length > 0) {
+  //     const currentComponent = stack.pop();
+  //
+  //     if (currentComponent) {
+  //       currentComponent.addAttributes({ id: `${idPrefix}-${count++}` });
+  //
+  //       const cmpChildren = currentComponent.components();
+  //
+  //       for (let i = 0; i < cmpChildren.length; i++) {
+  //         if (cmpChildren[i]) {
+  //           stack.push(cmpChildren[i]);
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
 }

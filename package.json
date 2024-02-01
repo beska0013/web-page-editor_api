@@ -27,6 +27,7 @@
     "compress-json": "^2.1.2",
     "compression": "^1.7.4",
     "grapesjs": "^0.21.7",
+    "is-valid-domain": "^0.1.6",
     "jsdom": "^23.0.1",
     "pg": "^8.11.3",
     "puppeteer": "^21.5.2",
